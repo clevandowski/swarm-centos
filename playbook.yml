@@ -1,0 +1,126 @@
+---
+- hosts: all
+  become: yes
+  gather_facts: no
+
+  tasks:
+
+    - name: Create /etc/docker conf directory
+      file: path=/etc/docker state=directory
+
+    - name: Install required package
+      yum:
+        name: yum-utils
+
+    - name: Add Docker GPG key
+      rpm_key:
+        key: https://download.docker.com/linux/centos/gpg
+        state: present
+
+    - name: Add Docker repository
+      get_url:
+        url: "https://download.docker.com/linux/centos/docker-ce.repo"
+        dest: '/etc/yum.repos.d/docker-ce.repo'
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: Configure Docker Edge repo
+      ini_file:
+        dest: '/etc/yum.repos.d/docker-ce.repo'
+        section: 'docker-ce-edge'
+        option: enabled
+        value: '0'
+
+    - name: Configure Docker Test repo
+      ini_file:
+        dest: '/etc/yum.repos.d/docker-ce.repo'
+        section: 'docker-ce-test'
+        option: enabled
+        value: '0'
+
+    - name: Install Docker
+      package: 
+        name: docker-ce 
+        state: present
+
+    - name: Install Docker Compose (if configured)
+      get_url:
+        url: https://github.com/docker/compose/releases/download/1.17.0/docker-compose-Linux-x86_64
+        dest: "/usr/local/bin/docker-compose"
+        mode: 0755
+
+    - name: Ensure Docker is started and enabled at boot
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: restart docker
+      service: name=docker state=restarted
+
+- hosts: node0
+  become: yes
+  tasks:
+    - name: Check if swarm already initialized on node0
+      shell: docker info 2>/dev/null | grep ^Swarm | cut -d' ' -f2
+      register: node_swarm_status
+
+    - name: Debug node_swarm_status
+      debug: msg="{{node_swarm_status.stdout}}"
+
+    - name: Init swarm on node0 if not already
+      command: docker swarm init --advertise-addr=eth1
+      when:
+        - node_swarm_status.stdout != "active"
+
+    - name: Dump worker token in node0 to join swarm on node2+
+      command: docker swarm join-token worker -q
+      register: swarm_worker_token
+
+    - name: Dump manager token in node0 to join swarm on node2+
+      command: docker swarm join-token manager -q
+      register: swarm_manager_token
+
+    - name: Debug swarm_worker_token
+      debug: msg="{{swarm_worker_token.stdout}}"
+
+    - name: Debug swarm_manager_token
+      debug: msg="{{swarm_manager_token.stdout}}"
+
+- hosts: manager
+  become: yes
+  tasks:
+    - name: Check if node already joined swarm cluster
+      shell: docker info 2>/dev/null | grep ^Swarm | cut -d' ' -f2
+      register: node_swarm_status
+
+    - name: Join swarm on node2+ as manager
+      command: docker swarm join --token "{{hostvars['node0']['swarm_manager_token'].stdout}}" 192.168.77.20:2377
+      when:
+        - hostvars['node0']['swarm_manager_token'] is defined
+        - node_swarm_status.stdout != "active"
+        - inventory_hostname != "node0"
+
+- hosts: worker
+  become: yes
+  tasks:
+    - name: Check if node already joined swarm cluster
+      shell: docker info 2>/dev/null | grep ^Swarm | cut -d' ' -f2
+      register: node_swarm_status
+
+    - name: Join swarm on node2+ as worker
+      command: docker swarm join --token "{{hostvars['node0']['swarm_worker_token'].stdout}}" 192.168.77.20:2377
+      when:
+        - hostvars['node0']['swarm_worker_token'] is defined
+        - node_swarm_status.stdout != "active"
+        - inventory_hostname != "node0"
+
+- hosts: all
+  become: yes
+  tasks:
+    - name: Inject file docker-compose.yml in /tmp
+      copy:
+        src: docker-compose.yml
+        dest: /tmp/docker-compose.yml
