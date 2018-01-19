@@ -1,7 +1,7 @@
 ---
 - hosts: all
   become: yes
-  gather_facts: no
+  gather_facts: yes
 
   tasks:
 
@@ -9,8 +9,9 @@
       file: path=/etc/docker state=directory
 
     - name: Install required package
-      yum:
+      package:
         name: yum-utils
+        state: present
 
     - name: Add Docker GPG key
       rpm_key:
