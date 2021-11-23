@@ -33,7 +33,7 @@ Lors de l'initialisation du 1er manager Swarm, il faut impérativement préciser
 Exemple pour node-0:
 
 ```
-docker swarm init --advertise-addr 192.168.77.20
+[vagrant@node-0 ~]$ docker swarm init --advertise-addr 192.168.77.20
 ```
 
 ## Accès sur le host
